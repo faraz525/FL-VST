@@ -1,0 +1,22 @@
+[package]
+name = "dark_bassline"
+version = "0.1.0"
+edition = "2021"
+authors = ["Faraz"]
+description = "Generative MIDI bassline plugin for dark tech house"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[workspace]
+members = ["xtask"]
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs"] }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+rand = "0.8"
+rand_chacha = "0.3"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
