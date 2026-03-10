@@ -20,7 +20,7 @@ pub enum PatternType {
     OctaveBounce,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Step {
     pub active: bool,
     pub note: u8,
@@ -39,7 +39,7 @@ impl Default for Step {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Pattern {
     pub steps: [Step; NUM_STEPS],
 }
@@ -53,6 +53,7 @@ impl Default for Pattern {
 }
 
 /// All inputs needed to generate a pattern.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GenerateParams {
     pub root: RootNote,
     pub scale: Scale,
@@ -111,12 +112,12 @@ fn pitch_root_pulse(
     let mut pitches = [root; NUM_STEPS];
 
     // Occasional variation on beats 3-4 area (steps 8-15)
-    for i in 8..NUM_STEPS {
+    for pitch in pitches.iter_mut().skip(8) {
         let roll: f32 = rng.gen();
         if roll < 0.15 {
-            pitches[i] = fifth;
+            *pitch = fifth;
         } else if roll < 0.25 {
-            pitches[i] = flat2;
+            *pitch = flat2;
         }
     }
 

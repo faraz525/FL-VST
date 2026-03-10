@@ -1,24 +1,26 @@
 use nih_plug::prelude::*;
-use rand::SeedableRng;
-use rand_chacha::ChaCha8Rng;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use std::io::Write;
+use pattern_state::SharedPatternState;
 
-/// Log to /tmp/dark_bassline.log for debugging. Only call on rare events, not per-sample.
-fn debug_log(msg: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new()
+/// Log to /tmp/dark_bassline.log for non-realtime diagnostics.
+pub(crate) fn debug_log(msg: &str) {
+    use std::io::Write;
+
+    if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open("/tmp/dark_bassline.log")
     {
-        let _ = writeln!(f, "{}", msg);
+        let _ = writeln!(file, "{}", msg);
     }
 }
 
 mod editor;
+mod midi_export;
 mod pattern;
+mod pattern_state;
 mod rhythm;
 mod scale;
 mod sequencer;
@@ -31,17 +33,13 @@ struct DarkBassline {
     params: Arc<DarkBasslineParams>,
     sequencer: Sequencer,
     current_pattern: Pattern,
-    rng: ChaCha8Rng,
+    current_pattern_revision: u64,
+    pattern_state: Arc<SharedPatternState>,
 
     // Shared state for UI
     ui_current_step: Arc<AtomicU8>,
     ui_is_playing: Arc<AtomicBool>,
-
-    /// Atomic trigger for pattern regeneration (set by UI, consumed by audio thread).
-    generate_trigger: Arc<AtomicBool>,
-
-    /// Counter to throttle diagnostic logging (log every N process calls).
-    debug_process_count: u64,
+    ui_tempo: Arc<Mutex<f64>>,
 }
 
 #[derive(Params)]
@@ -134,48 +132,60 @@ impl Default for DarkBasslineParams {
 impl Default for DarkBassline {
     fn default() -> Self {
         let params = Arc::new(DarkBasslineParams::default());
-        let mut rng = ChaCha8Rng::from_entropy();
-
-        let initial_pattern = pattern::generate(
-            &GenerateParams {
-                root: RootNote::C,
-                scale: Scale::Phrygian,
-                pattern_type: PatternType::RootPulse,
-                density: 4,
-                octave: 2,
-                velocity: 0.8,
-                vel_range: 0.1,
-                gate: 0.6,
-            },
-            &mut rng,
-        );
+        let pattern_state = Arc::new(SharedPatternState::new(default_generate_params()));
+        let current_pattern = pattern_state.current_pattern();
+        let current_pattern_revision = pattern_state.revision();
 
         Self {
             params,
             sequencer: Sequencer::new(),
-            current_pattern: initial_pattern,
-            rng,
+            current_pattern,
+            current_pattern_revision,
+            pattern_state,
             ui_current_step: Arc::new(AtomicU8::new(0)),
             ui_is_playing: Arc::new(AtomicBool::new(false)),
-            generate_trigger: Arc::new(AtomicBool::new(false)),
-            debug_process_count: 0,
+            ui_tempo: Arc::new(Mutex::new(120.0)),
         }
     }
 }
 
+pub(crate) fn default_generate_params() -> GenerateParams {
+    GenerateParams {
+        root: RootNote::C,
+        scale: Scale::Phrygian,
+        pattern_type: PatternType::RootPulse,
+        density: 4,
+        octave: 2,
+        velocity: 0.8,
+        vel_range: 0.1,
+        gate: 0.6,
+    }
+}
+
+pub(crate) fn current_generate_params(params: &DarkBasslineParams) -> GenerateParams {
+    GenerateParams {
+        root: params.root.value(),
+        scale: params.scale.value(),
+        pattern_type: params.pattern_type.value(),
+        density: params.density.value() as u8,
+        octave: params.octave.value() as u8,
+        velocity: params.velocity.value(),
+        vel_range: params.vel_range.value(),
+        gate: params.gate.value(),
+    }
+}
+
 impl DarkBassline {
-    fn regenerate_pattern(&mut self) {
-        let gen_params = GenerateParams {
-            root: self.params.root.value(),
-            scale: self.params.scale.value(),
-            pattern_type: self.params.pattern_type.value(),
-            density: self.params.density.value() as u8,
-            octave: self.params.octave.value() as u8,
-            velocity: self.params.velocity.value(),
-            vel_range: self.params.vel_range.value(),
-            gate: self.params.gate.value(),
-        };
-        self.current_pattern = pattern::generate(&gen_params, &mut self.rng);
+    fn sync_pattern_state(&mut self) {
+        self.pattern_state
+            .sync_to_params(current_generate_params(self.params.as_ref()));
+
+        if let Some(pattern) = self
+            .pattern_state
+            .try_pattern_if_newer(&mut self.current_pattern_revision)
+        {
+            self.current_pattern = pattern;
+        }
     }
 }
 
@@ -210,7 +220,8 @@ impl Plugin for DarkBassline {
             editor::UiState {
                 current_step: self.ui_current_step.clone(),
                 is_playing: self.ui_is_playing.clone(),
-                generate_trigger: self.generate_trigger.clone(),
+                pattern_state: self.pattern_state.clone(),
+                tempo: self.ui_tempo.clone(),
             },
         )
     }
@@ -218,21 +229,17 @@ impl Plugin for DarkBassline {
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
-        buffer_config: &BufferConfig,
+        _buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
-        debug_log(&format!(
-            "Dark Bassline initialized: sample_rate={}, max_buffer_size={}",
-            buffer_config.sample_rate, buffer_config.max_buffer_size
-        ));
-        self.regenerate_pattern();
-        let active = self.current_pattern.steps.iter().filter(|s| s.active).count();
-        debug_log(&format!("Initial pattern: {} active steps", active));
+        self.sync_pattern_state();
         true
     }
 
     fn reset(&mut self) {
         self.sequencer.reset();
+        self.ui_current_step.store(0, Ordering::Relaxed);
+        self.ui_is_playing.store(false, Ordering::Relaxed);
     }
 
     fn process(
@@ -241,45 +248,15 @@ impl Plugin for DarkBassline {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // Check atomic trigger from UI (compare-exchange consumes the trigger)
-        if self
-            .generate_trigger
-            .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-        {
-            debug_log("Generate triggered — regenerating pattern");
-            self.regenerate_pattern();
-            let active = self.current_pattern.steps.iter().filter(|s| s.active).count();
-            debug_log(&format!("New pattern: {} active steps", active));
-        }
+        self.sync_pattern_state();
 
-        // Snapshot transport state into owned struct to avoid borrow conflict with context
         let transport = TransportState::from_transport(context.transport());
         let buffer_len = buffer.samples() as u32;
 
-        // Log transport diagnostics every ~1 second (44100/192 ≈ 230 calls/sec)
-        self.debug_process_count += 1;
-        if self.debug_process_count % 500 == 1 {
-            debug_log(&format!(
-                "process() call #{}: playing={}, pos_beats={:?}, tempo={:.1}, buf_len={}",
-                self.debug_process_count, transport.playing, transport.pos_beats, transport.tempo, buffer_len
-            ));
+        if let Ok(mut tempo) = self.ui_tempo.try_lock() {
+            *tempo = transport.tempo;
         }
 
-        // Log transport state once when play starts
-        if transport.playing && !self.ui_is_playing.load(Ordering::Relaxed) {
-            debug_log(&format!(
-                "Transport started: bpm={:.1}, pos_beats={:?}, sample_rate={}",
-                transport.tempo, transport.pos_beats, transport.sample_rate
-            ));
-            let active = self.current_pattern.steps.iter().filter(|s| s.active).count();
-            debug_log(&format!("Current pattern has {} active steps", active));
-        }
-
-        // The sequencer always runs (free-running if host transport is broken)
-        self.ui_is_playing.store(true, Ordering::Relaxed);
-
-        // Run the sequencer
         self.sequencer.process::<Self>(
             buffer_len,
             &self.current_pattern,
@@ -288,7 +265,9 @@ impl Plugin for DarkBassline {
             context,
         );
 
-        // Update UI step indicator from sequencer's internal beat position
+        self.ui_is_playing
+            .store(self.sequencer.is_running(), Ordering::Relaxed);
+
         let beat_pos = self.sequencer.current_beat_pos();
         let step = ((beat_pos * 4.0).rem_euclid(NUM_STEPS as f64)) as u8;
         self.ui_current_step.store(step, Ordering::Relaxed);

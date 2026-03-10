@@ -2,20 +2,24 @@ use nih_plug::prelude::*;
 use nih_plug_egui::egui;
 use nih_plug_egui::{create_egui_editor, EguiState};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use crate::DarkBasslineParams;
+use crate::midi_export::{self, MidiExportParams};
+use crate::pattern_state::SharedPatternState;
+use crate::{current_generate_params, DarkBasslineParams};
 
 /// Shared state from the DSP thread for UI display.
 pub struct UiState {
     pub current_step: Arc<AtomicU8>,
     pub is_playing: Arc<AtomicBool>,
-    /// Atomic trigger: UI sets to true, audio thread consumes.
-    pub generate_trigger: Arc<AtomicBool>,
+    /// Shared generated pattern state for live preview and MIDI export.
+    pub pattern_state: Arc<SharedPatternState>,
+    /// Current tempo from host transport for MIDI export.
+    pub tempo: Arc<Mutex<f64>>,
 }
 
 pub fn default_editor_state() -> Arc<EguiState> {
-    EguiState::from_size(560, 360)
+    EguiState::from_size(560, 400)
 }
 
 pub fn create(
@@ -57,6 +61,8 @@ fn draw_ui(
     params: &DarkBasslineParams,
     state: &mut UiState,
 ) {
+    state.pattern_state.sync_to_params(current_generate_params(params));
+
     egui::CentralPanel::default().show(ctx, |ui| {
         // Header
         ui.vertical_centered(|ui| {
@@ -114,9 +120,10 @@ fn draw_ui(
         ui.separator();
         ui.add_space(8.0);
 
-        // Generate button
+        // Action buttons
         ui.vertical_centered(|ui| {
-            let btn = ui.add_sized(
+            // Generate button
+            let gen_btn = ui.add_sized(
                 [180.0, 32.0],
                 egui::Button::new(
                     egui::RichText::new("GENERATE")
@@ -125,8 +132,44 @@ fn draw_ui(
                 )
                 .fill(egui::Color32::from_rgb(60, 40, 80)),
             );
-            if btn.clicked() {
-                state.generate_trigger.store(true, Ordering::Relaxed);
+            if gen_btn.clicked() {
+                state
+                    .pattern_state
+                    .generate_new_variation(current_generate_params(params));
+            }
+
+            ui.add_space(4.0);
+
+            // Export MIDI button
+            let export_btn = ui.add_sized(
+                [180.0, 32.0],
+                egui::Button::new(
+                    egui::RichText::new("EXPORT MIDI")
+                        .size(13.0)
+                        .color(egui::Color32::from_rgb(200, 210, 230)),
+                )
+                .fill(egui::Color32::from_rgb(35, 50, 80)),
+            );
+            if export_btn.clicked() {
+                let pattern = state.pattern_state.current_pattern();
+                let tempo = state.tempo.lock().map(|g| *g).unwrap_or(120.0);
+
+                std::thread::spawn(move || {
+                    let dialog = rfd::FileDialog::new()
+                        .add_filter("MIDI", &["mid"])
+                        .set_file_name("dark-bassline.mid")
+                        .save_file();
+
+                    if let Some(path) = dialog {
+                        let params = MidiExportParams {
+                            pattern,
+                            tempo_bpm: tempo,
+                        };
+                        if let Err(e) = midi_export::export_to_file(&params, &path) {
+                            crate::debug_log(&format!("MIDI export failed: {}", e));
+                        }
+                    }
+                });
             }
         });
 
@@ -178,7 +221,7 @@ fn draw_step_indicator(ui: &mut egui::Ui, state: &UiState) {
     });
 }
 
-fn param_with_label<'a, P: Param>(
+fn param_with_label<P: Param>(
     ui: &mut egui::Ui,
     label: &str,
     param: &P,

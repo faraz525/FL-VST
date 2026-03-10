@@ -30,9 +30,8 @@ struct ActiveNote {
     off_sample: u64,
 }
 
-/// Free-running sequencer that uses an internal sample clock.
-/// Syncs to host tempo but does NOT depend on transport.playing or pos_beats,
-/// which FL Studio often doesn't provide reliably to VST3 plugins.
+/// Transport-driven sequencer that falls back to an internal clock when beat position
+/// is unavailable, but never plays unless the host transport is running.
 pub struct Sequencer {
     /// Current step index (0..15). None means no step has played yet.
     current_step: Option<usize>,
@@ -71,15 +70,24 @@ impl Sequencer {
         self.internal_beat_pos
     }
 
+    pub fn is_running(&self) -> bool {
+        self.running
+    }
+
     /// Reset the sequencer state.
     pub fn reset(&mut self) {
         self.current_step = None;
+        self.running = false;
         self.internal_beat_pos = 0.0;
+        self.active_notes.clear();
+        self.samples_processed = 0;
         self.last_host_beat = -1.0;
+        self.host_transport_works = false;
+        self.eval_count = 0;
     }
 
-    /// Main process function. Uses host transport if it works,
-    /// otherwise free-runs an internal clock synced to host tempo.
+    /// Main process function. Uses host beat position when it advances, otherwise
+    /// falls back to a tempo-synced internal clock while transport is playing.
     pub fn process<P: Plugin<SysExMessage = ()>>(
         &mut self,
         buffer_len: u32,
@@ -102,23 +110,14 @@ impl Sequencer {
             }
         }
 
-        // Determine effective playing state and beat position
-        let is_playing = if self.host_transport_works {
-            transport.playing
-        } else {
-            // Host transport broken — always run
-            true
-        };
+        let is_playing = transport.playing;
 
         // Handle stop
         if !is_playing {
             if self.running {
                 self.send_all_notes_off(0, context);
-                self.reset();
             }
-            self.running = false;
-            self.last_host_beat = host_beat;
-            self.samples_processed += buffer_len as u64;
+            self.reset();
             return;
         }
 
@@ -280,5 +279,195 @@ impl Sequencer {
                 velocity: 0.0,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[derive(Params)]
+    struct TestParams {
+        #[id = "dummy"]
+        dummy: FloatParam,
+    }
+
+    impl Default for TestParams {
+        fn default() -> Self {
+            Self {
+                dummy: FloatParam::new("Dummy", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            }
+        }
+    }
+
+    struct TestPlugin {
+        params: Arc<TestParams>,
+    }
+
+    impl Default for TestPlugin {
+        fn default() -> Self {
+            Self {
+                params: Arc::new(TestParams::default()),
+            }
+        }
+    }
+
+impl Plugin for TestPlugin {
+        const NAME: &'static str = "Test";
+        const VENDOR: &'static str = "Test";
+        const URL: &'static str = "";
+        const EMAIL: &'static str = "";
+        const VERSION: &'static str = "0.0.0";
+        const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[];
+
+        type SysExMessage = ();
+        type BackgroundTask = ();
+
+        fn params(&self) -> Arc<dyn Params> {
+            self.params.clone()
+        }
+
+        fn process(
+            &mut self,
+            _buffer: &mut Buffer,
+            _aux: &mut AuxiliaryBuffers,
+            _context: &mut impl ProcessContext<Self>,
+        ) -> ProcessStatus {
+            ProcessStatus::Normal
+        }
+    }
+
+    #[derive(Default)]
+    struct TestProcessContext {
+        events: Vec<PluginNoteEvent<TestPlugin>>,
+    }
+
+    impl ProcessContext<TestPlugin> for TestProcessContext {
+        fn plugin_api(&self) -> PluginApi {
+            PluginApi::Standalone
+        }
+
+        fn execute_background(&self, _task: <TestPlugin as Plugin>::BackgroundTask) {}
+
+        fn execute_gui(&self, _task: <TestPlugin as Plugin>::BackgroundTask) {}
+
+        fn transport(&self) -> &Transport {
+            panic!("transport() is not used in these tests")
+        }
+
+        fn next_event(&mut self) -> Option<PluginNoteEvent<TestPlugin>> {
+            None
+        }
+
+        fn send_event(&mut self, event: PluginNoteEvent<TestPlugin>) {
+            self.events.push(event);
+        }
+
+        fn set_latency_samples(&self, _samples: u32) {}
+
+        fn set_current_voice_capacity(&self, _capacity: u32) {}
+    }
+
+    fn pattern_with_single_hit() -> Pattern {
+        let mut pattern = Pattern::default();
+        pattern.steps[0] = Step {
+            active: true,
+            note: 36,
+            velocity: 0.8,
+            gate: 0.75,
+        };
+        pattern
+    }
+
+    fn playing_transport(pos_beats: Option<f64>) -> TransportState {
+        TransportState {
+            playing: true,
+            sample_rate: 48_000.0,
+            tempo: 120.0,
+            pos_beats,
+        }
+    }
+
+    fn stopped_transport() -> TransportState {
+        TransportState {
+            playing: false,
+            sample_rate: 48_000.0,
+            tempo: 120.0,
+            pos_beats: None,
+        }
+    }
+
+    #[test]
+    fn stopped_transport_does_not_emit_notes_by_default() {
+        let mut sequencer = Sequencer::new();
+        let mut context = TestProcessContext::default();
+
+        sequencer.process::<TestPlugin>(
+            512,
+            &pattern_with_single_hit(),
+            0.0,
+            &stopped_transport(),
+            &mut context,
+        );
+
+        assert!(context.events.is_empty());
+        assert!(!sequencer.running);
+    }
+
+    #[test]
+    fn reset_clears_active_note_and_transport_tracking_state() {
+        let mut sequencer = Sequencer::new();
+        let mut context = TestProcessContext::default();
+
+        sequencer.process::<TestPlugin>(
+            64,
+            &pattern_with_single_hit(),
+            0.0,
+            &playing_transport(Some(0.0)),
+            &mut context,
+        );
+
+        assert!(!sequencer.active_notes.is_empty());
+        assert!(sequencer.running);
+        assert!(sequencer.samples_processed > 0);
+
+        sequencer.reset();
+
+        assert!(sequencer.active_notes.is_empty());
+        assert!(!sequencer.running);
+        assert_eq!(sequencer.samples_processed, 0);
+        assert_eq!(sequencer.last_host_beat, -1.0);
+        assert!(!sequencer.host_transport_works);
+        assert_eq!(sequencer.eval_count, 0);
+    }
+
+    #[test]
+    fn restart_after_reset_does_not_emit_stale_note_offs() {
+        let mut sequencer = Sequencer::new();
+        let mut context = TestProcessContext::default();
+
+        sequencer.process::<TestPlugin>(
+            64,
+            &pattern_with_single_hit(),
+            0.0,
+            &playing_transport(Some(0.0)),
+            &mut context,
+        );
+        sequencer.reset();
+        context.events.clear();
+
+        sequencer.process::<TestPlugin>(
+            64,
+            &pattern_with_single_hit(),
+            0.0,
+            &playing_transport(Some(0.0)),
+            &mut context,
+        );
+
+        assert!(matches!(
+            context.events.as_slice(),
+            [NoteEvent::NoteOn { .. }]
+        ));
     }
 }

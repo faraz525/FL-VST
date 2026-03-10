@@ -23,15 +23,16 @@ pub fn euclidean(hits: u8, steps: u8) -> [bool; 16] {
     }
 
     // Bresenham-style Euclidean rhythm — zero allocations
-    for i in 0..steps {
+    for (i, slot) in pattern.iter_mut().enumerate().take(steps) {
         if (i * hits) % steps < hits {
-            pattern[i] = true;
+            *slot = true;
         }
     }
 
     pattern
 }
 
+#[cfg(test)]
 /// Rotates a pattern by `offset` steps to the right.
 /// Rotation shifts the downbeat, creating syncopation.
 pub fn rotate(pattern: &[bool; 16], offset: u8) -> [bool; 16] {
