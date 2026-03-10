@@ -313,7 +313,7 @@ mod tests {
         }
     }
 
-impl Plugin for TestPlugin {
+    impl Plugin for TestPlugin {
         const NAME: &'static str = "Test";
         const VENDOR: &'static str = "Test";
         const URL: &'static str = "";

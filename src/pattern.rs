@@ -146,12 +146,8 @@ fn pitch_syncopated(
             // Pick a scale tone, weighted toward root and fifth
             let (weights, len) = build_pitch_weights(intervals);
             let degree = weighted_pick(&weights, len, rng);
-            pitches[i] = scale::degree_to_midi(
-                params.root,
-                params.scale,
-                params.octave,
-                degree as i8,
-            );
+            pitches[i] =
+                scale::degree_to_midi(params.root, params.scale, params.octave, degree as i8);
         }
     }
 
@@ -353,7 +349,10 @@ mod tests {
                 gate: 0.6,
             };
             let pattern = generate(&params, &mut test_rng());
-            assert!(pattern.steps.iter().any(|s| s.active), "{pt:?} produced no active steps");
+            assert!(
+                pattern.steps.iter().any(|s| s.active),
+                "{pt:?} produced no active steps"
+            );
         }
     }
 

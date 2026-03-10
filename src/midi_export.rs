@@ -66,8 +66,8 @@ fn build_track(params: &MidiExportParams) -> Vec<TrackEvent<'static>> {
     for (i, step) in params.pattern.steps.iter().enumerate() {
         if step.active {
             let velocity = (step.velocity * 127.0).round().clamp(1.0, 127.0) as u8;
-            let gate_ticks = ((step.gate * TICKS_PER_STEP as f32).round() as u32)
-                .clamp(1, TICKS_PER_STEP);
+            let gate_ticks =
+                ((step.gate * TICKS_PER_STEP as f32).round() as u32).clamp(1, TICKS_PER_STEP);
 
             // NoteOn
             events.push(TrackEvent {

@@ -90,41 +90,32 @@ impl Default for DarkBasslineParams {
 
             octave: IntParam::new("Octave", 2, IntRange::Linear { min: 1, max: 4 }),
 
-            gate: FloatParam::new(
-                "Gate",
-                0.6,
-                FloatRange::Linear { min: 0.1, max: 1.0 },
-            )
-            .with_unit("%")
-            .with_value_to_string(Arc::new(|v| format!("{:.0}", v * 100.0)))
-            .with_string_to_value(Arc::new(|s| s.parse::<f32>().ok().map(|v| v / 100.0))),
+            gate: FloatParam::new("Gate", 0.6, FloatRange::Linear { min: 0.1, max: 1.0 })
+                .with_unit("%")
+                .with_value_to_string(Arc::new(|v| format!("{:.0}", v * 100.0)))
+                .with_string_to_value(Arc::new(|s| s.parse::<f32>().ok().map(|v| v / 100.0))),
 
             swing: FloatParam::new(
                 "Swing",
                 0.0,
-                FloatRange::Linear { min: 0.0, max: 0.25 },
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 0.25,
+                },
             )
             .with_unit("%")
             .with_value_to_string(Arc::new(|v| format!("{:.0}", v * 100.0)))
             .with_string_to_value(Arc::new(|s| s.parse::<f32>().ok().map(|v| v / 100.0))),
 
-            velocity: FloatParam::new(
-                "Velocity",
-                0.8,
-                FloatRange::Linear { min: 0.1, max: 1.0 },
-            )
-            .with_unit("%")
-            .with_value_to_string(Arc::new(|v| format!("{:.0}", v * 100.0)))
-            .with_string_to_value(Arc::new(|s| s.parse::<f32>().ok().map(|v| v / 100.0))),
+            velocity: FloatParam::new("Velocity", 0.8, FloatRange::Linear { min: 0.1, max: 1.0 })
+                .with_unit("%")
+                .with_value_to_string(Arc::new(|v| format!("{:.0}", v * 100.0)))
+                .with_string_to_value(Arc::new(|s| s.parse::<f32>().ok().map(|v| v / 100.0))),
 
-            vel_range: FloatParam::new(
-                "Vel Range",
-                0.1,
-                FloatRange::Linear { min: 0.0, max: 0.5 },
-            )
-            .with_unit("%")
-            .with_value_to_string(Arc::new(|v| format!("{:.0}", v * 100.0)))
-            .with_string_to_value(Arc::new(|s| s.parse::<f32>().ok().map(|v| v / 100.0))),
+            vel_range: FloatParam::new("Vel Range", 0.1, FloatRange::Linear { min: 0.0, max: 0.5 })
+                .with_unit("%")
+                .with_value_to_string(Arc::new(|v| format!("{:.0}", v * 100.0)))
+                .with_string_to_value(Arc::new(|s| s.parse::<f32>().ok().map(|v| v / 100.0))),
         }
     }
 }
@@ -282,18 +273,13 @@ impl ClapPlugin for DarkBassline {
         Some("Generative MIDI bassline plugin for dark tech house");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
-    const CLAP_FEATURES: &'static [ClapFeature] = &[
-        ClapFeature::NoteEffect,
-        ClapFeature::Utility,
-    ];
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::NoteEffect, ClapFeature::Utility];
 }
 
 impl Vst3Plugin for DarkBassline {
     const VST3_CLASS_ID: [u8; 16] = *b"DrkBassLn_Faraz!";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
-        Vst3SubCategory::Instrument,
-        Vst3SubCategory::Tools,
-    ];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
+        &[Vst3SubCategory::Instrument, Vst3SubCategory::Tools];
 }
 
 nih_export_clap!(DarkBassline);

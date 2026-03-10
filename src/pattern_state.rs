@@ -107,7 +107,13 @@ mod tests {
         pattern
             .steps
             .iter()
-            .map(|step| (step.active, step.note, (step.velocity * 127.0).round() as u8))
+            .map(|step| {
+                (
+                    step.active,
+                    step.note,
+                    (step.velocity * 127.0).round() as u8,
+                )
+            })
             .collect()
     }
 
@@ -128,7 +134,8 @@ mod tests {
     #[test]
     fn sync_to_params_is_a_noop_for_identical_generation_params() {
         let initial = params(RootNote::C, 6, PatternType::Syncopated);
-        let state = SharedPatternState::new_with_seed(params(RootNote::C, 6, PatternType::Syncopated), 7);
+        let state =
+            SharedPatternState::new_with_seed(params(RootNote::C, 6, PatternType::Syncopated), 7);
 
         let before = pattern_signature(&state.current_pattern());
 
@@ -141,7 +148,10 @@ mod tests {
     #[test]
     fn generate_new_variation_changes_pattern_without_param_changes() {
         let initial = params(RootNote::FSharp, 8, PatternType::Syncopated);
-        let state = SharedPatternState::new_with_seed(params(RootNote::FSharp, 8, PatternType::Syncopated), 99);
+        let state = SharedPatternState::new_with_seed(
+            params(RootNote::FSharp, 8, PatternType::Syncopated),
+            99,
+        );
 
         let before = pattern_signature(&state.current_pattern());
 

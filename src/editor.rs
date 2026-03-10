@@ -22,10 +22,7 @@ pub fn default_editor_state() -> Arc<EguiState> {
     EguiState::from_size(560, 400)
 }
 
-pub fn create(
-    params: Arc<DarkBasslineParams>,
-    ui_state: UiState,
-) -> Option<Box<dyn Editor>> {
+pub fn create(params: Arc<DarkBasslineParams>, ui_state: UiState) -> Option<Box<dyn Editor>> {
     create_egui_editor(
         params.editor_state.clone(),
         ui_state,
@@ -61,7 +58,9 @@ fn draw_ui(
     params: &DarkBasslineParams,
     state: &mut UiState,
 ) {
-    state.pattern_state.sync_to_params(current_generate_params(params));
+    state
+        .pattern_state
+        .sync_to_params(current_generate_params(params));
 
     egui::CentralPanel::default().show(ctx, |ui| {
         // Header
@@ -221,12 +220,7 @@ fn draw_step_indicator(ui: &mut egui::Ui, state: &UiState) {
     });
 }
 
-fn param_with_label<P: Param>(
-    ui: &mut egui::Ui,
-    label: &str,
-    param: &P,
-    setter: &ParamSetter,
-) {
+fn param_with_label<P: Param>(ui: &mut egui::Ui, label: &str, param: &P, setter: &ParamSetter) {
     ui.vertical(|ui| {
         ui.label(
             egui::RichText::new(label)
