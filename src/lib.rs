@@ -2,21 +2,10 @@ use nih_plug::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
+use debug_state::SharedDebugState;
 use pattern_state::SharedPatternState;
 
-/// Log to /tmp/dark_bassline.log for non-realtime diagnostics.
-pub(crate) fn debug_log(msg: &str) {
-    use std::io::Write;
-
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/dark_bassline.log")
-    {
-        let _ = writeln!(file, "{}", msg);
-    }
-}
-
+mod debug_state;
 mod editor;
 mod midi_export;
 mod pattern;
@@ -35,6 +24,7 @@ struct DarkBassline {
     current_pattern: Pattern,
     current_pattern_revision: u64,
     pattern_state: Arc<SharedPatternState>,
+    debug_state: Arc<SharedDebugState>,
 
     // Shared state for UI
     ui_current_step: Arc<AtomicU8>,
@@ -124,6 +114,7 @@ impl Default for DarkBassline {
     fn default() -> Self {
         let params = Arc::new(DarkBasslineParams::default());
         let pattern_state = Arc::new(SharedPatternState::new(default_generate_params()));
+        let debug_state = Arc::new(SharedDebugState::new());
         let current_pattern = pattern_state.current_pattern();
         let current_pattern_revision = pattern_state.revision();
 
@@ -133,6 +124,7 @@ impl Default for DarkBassline {
             current_pattern,
             current_pattern_revision,
             pattern_state,
+            debug_state,
             ui_current_step: Arc::new(AtomicU8::new(0)),
             ui_is_playing: Arc::new(AtomicBool::new(false)),
             ui_tempo: Arc::new(Mutex::new(120.0)),
@@ -212,6 +204,7 @@ impl Plugin for DarkBassline {
                 current_step: self.ui_current_step.clone(),
                 is_playing: self.ui_is_playing.clone(),
                 pattern_state: self.pattern_state.clone(),
+                debug_state: self.debug_state.clone(),
                 tempo: self.ui_tempo.clone(),
             },
         )
@@ -247,6 +240,8 @@ impl Plugin for DarkBassline {
         if let Ok(mut tempo) = self.ui_tempo.try_lock() {
             *tempo = transport.tempo;
         }
+        self.debug_state
+            .update_transport(transport.playing, transport.tempo, transport.pos_beats);
 
         self.sequencer.process::<Self>(
             buffer_len,
