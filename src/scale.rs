@@ -95,10 +95,7 @@ pub fn root_midi_note(root: RootNote, octave: u8) -> u8 {
 /// Finds the fifth by interval value rather than assuming a fixed degree index.
 pub fn fifth_midi_note(root: RootNote, scale: Scale, octave: u8) -> u8 {
     let intervals = scale.intervals();
-    let degree = intervals
-        .iter()
-        .position(|&i| i == 7)
-        .unwrap_or(4) as i8;
+    let degree = intervals.iter().position(|&i| i == 7).unwrap_or(4) as i8;
     degree_to_midi(root, scale, octave, degree)
 }
 

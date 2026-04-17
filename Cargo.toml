@@ -16,6 +16,8 @@ nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["a
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 rand = "0.8"
 rand_chacha = "0.3"
+midly = "0.5"
+rfd = "0.15"
 
 [profile.release]
 lto = "thin"
